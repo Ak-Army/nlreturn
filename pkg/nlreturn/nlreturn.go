@@ -15,6 +15,7 @@ const (
 )
 
 var blockSize int
+var realStatementCheck bool
 
 // NewAnalyzer returns a new nlreturn analyzer.
 func NewAnalyzer() *analysis.Analyzer {
@@ -26,6 +27,10 @@ func NewAnalyzer() *analysis.Analyzer {
 
 	a.Flags.Init("nlreturn", flag.ExitOnError)
 	a.Flags.IntVar(&blockSize, "block-size", 1, "set block size that is still ok")
+	a.Flags.BoolVar(&realStatementCheck,
+		"real-statement-check",
+		false,
+		"check if the line before return is a real statement or not")
 
 	return a
 }
@@ -58,10 +63,10 @@ func inspectBlock(pass *analysis.Pass, block []ast.Stmt) {
 				return
 			}
 
-			if line(pass, stmt.Pos())-line(pass, block[i-1].End()) <= 1 {
+			if m := isOk(pass, block, i); m != "" {
 				pass.Report(analysis.Diagnostic{
 					Pos:     stmt.Pos(),
-					Message: fmt.Sprintf("%s with no blank line before", name(stmt)),
+					Message: m,
 					SuggestedFixes: []analysis.SuggestedFix{
 						{
 							TextEdits: []analysis.TextEdit{
@@ -77,6 +82,46 @@ func inspectBlock(pass *analysis.Pass, block []ast.Stmt) {
 			}
 		}
 	}
+}
+
+func isOk(pass *analysis.Pass, block []ast.Stmt, i int) string {
+	stmt := block[i]
+	if !realStatementCheck {
+		if line(pass, stmt.Pos())-line(pass, block[i-1].End()) <= 1 {
+			return fmt.Sprintf("%s with no blank line before", name(stmt))
+		}
+		return ""
+	}
+	ret := true
+	switch s := block[i-1].(type) {
+	case *ast.BranchStmt, *ast.ReturnStmt:
+		ret = false
+	case *ast.BlockStmt:
+		ret = false
+	case *ast.IfStmt, *ast.SwitchStmt, *ast.SelectStmt, *ast.ForStmt, *ast.RangeStmt, *ast.TypeSwitchStmt:
+		ret = false
+	case *ast.AssignStmt:
+		if len(s.Rhs) <= 1 {
+			switch s.Rhs[0].(type) {
+			case *ast.CompositeLit, *ast.UnaryExpr, *ast.CallExpr:
+				if line(pass, block[i-1].End())-line(pass, block[i-1].Pos()) > 1 {
+					ret = false
+				}
+			}
+		}
+	case *ast.ExprStmt, *ast.GoStmt, *ast.DeferStmt:
+		if line(pass, block[i-1].End())-line(pass, block[i-1].Pos()) > 1 {
+			ret = false
+		}
+	default:
+	}
+	if ret && line(pass, stmt.Pos())-line(pass, block[i-1].End()) <= 1 {
+		return fmt.Sprintf("%s with no blank line before", name(stmt))
+	}
+	if !ret && line(pass, stmt.Pos())-line(pass, block[i-1].End()) > 1 {
+		return fmt.Sprintf("%s no blank line needed", name(stmt))
+	}
+	return ""
 }
 
 func name(stmt ast.Stmt) string {

@@ -37,3 +37,21 @@ func TestBlockSize(t *testing.T) {
 		analyzer,
 		"bs")
 }
+
+func TestRealStatement(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get wd: %s", err)
+	}
+
+	analyzer := NewAnalyzer()
+	err = analyzer.Flags.Set("real-statement-check", "true")
+	if err != nil {
+		t.Fatalf("Failed to set flag: %s", err)
+	}
+
+	analysistest.Run(t,
+		filepath.Join(filepath.Dir(filepath.Dir(wd)), "testdata"),
+		analyzer,
+		"rs")
+}
